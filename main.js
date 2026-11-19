@@ -16,89 +16,89 @@ button5.addEventListener('click', () => playVowelSound2("으"))
 button6.addEventListener('click', () => playVowelSound2("이"))
 button7.addEventListener('click', () => playVowelSound2("에"))
 
-function playVowelSound1() {
-    const now = ctx.currentTime;
+let currentSound = null;
+const VOWEL_PRESETS = {
+    '아': [
+        [730,  8,  1.2], // F1
+        [1090, 10, 0.8], // F2
+        [2440, 12, 0.3]  // F3
+    ],
+    '어': [
+        [640,  8,  1.2],
+        [1190, 10, 0.7],
+        [2390, 12, 0.3]
+    ],
+    '오': [
+        [570,  8,  1.2],
+        [840,  10, 0.6],
+        [2410, 12, 0.2]
+    ],
+    '우': [
+        [300,  8,  1.3],
+        [870,  10, 0.4],
+        [2240, 12, 0.15]
+    ],
+    '으': [
+        [350,  8,  1.2],
+        [1500, 10, 0.5],
+        [2350, 12, 0.25]
+    ],
+    '이': [
+        [270,  8,  1.2],
+        [2290, 12, 0.7],
+        [3010, 14, 0.4]
+    ],
+    '에': [
+        [530,  8,  1.2],
+        [1840, 10, 0.7],
+        [2480, 12, 0.35]
+    ],
+    '애': [
+        [660,  8,  1.2],
+        [1720, 10, 0.75],
+        [2410, 12, 0.35]
+    ]
+};
 
-    const osc = new OscillatorNode(ctx, { type: 'sawtooth', frequency: 120 });
-    const gainNode = new GainNode(ctx, { gain: 0.2 });
-    const compressor = new DynamicsCompressorNode(ctx, {
-        threshold: -24, // 기본값: -24 (범위: -100 ~ 0 dB)
-        knee: 30,       // 기본값: 30  (범위: 0 ~ 40 dB)
-        ratio: 20,      // 기본값: 12  (범위: 1 ~ 20)
-        attack: 0.003,  // 기본값: 0.003 (범위: 0 ~ 1 초)
-        release: 0.25   // 기본값: 0.25  (범위: 0 ~ 1 초)
-    });
+// 1. 공용 노드는 함수 밖에서 한 번만 생성 및 연결
+const compressor = new DynamicsCompressorNode(ctx, {
+    threshold: -24,
+    knee: 30,
+    ratio: 20,
+    attack: 0.003,
+    release: 0.15
+});
 
-    const formants = [[730, 15], [1090, 15], [2440, 12]];
-
-    formants
-        .map(([frequency, Q]) => new BiquadFilterNode(ctx, { type: 'lowpass', frequency, Q }))
-        .reduce((prev, curr) => prev.connect(curr), osc)
-        .connect(compressor)
-        .connect(gainNode)
-        .connect(ctx.destination);
-
-    osc.start();
-    osc.stop(now + 1.0);
-}
+const masterGain = new GainNode(ctx, { gain: 0.2 });
+compressor.connect(masterGain).connect(ctx.destination);
 
 function playVowelSound2(vowelChar) {
+    if (ctx.state === 'suspended') {
+        ctx.resume();
+    }
+
     const now = ctx.currentTime;
 
-    const osc = new OscillatorNode(ctx, { type: 'sawtooth', frequency: 120 })
-    const compressor = new DynamicsCompressorNode(ctx, {
-        threshold: -24,
-        knee: 30,
-        ratio: 20,
-        attack: 0.003,
-        release: 0.15
-    });
-    const masterGain = new GainNode(ctx, { gain: 0.2 })
+    // 2. 기존 재생 중인 음이 있다면 전용 voiceGain을 줄이고 정지
+    if (currentSound) {
+        const { osc, voiceGain } = currentSound;
+        voiceGain.gain.cancelScheduledValues(now);
+        voiceGain.gain.setValueAtTime(voiceGain.gain.value, now);
+        voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.02);
+        osc.stop(now + 0.02);
+    }
 
-    const VOWEL_PRESETS = {
-        '아': [
-            [730,  8,  1.2], // F1
-            [1090, 10, 0.8], // F2
-            [2440, 12, 0.3]  // F3
-        ],
-        '어': [
-            [640,  8,  1.2],
-            [1190, 10, 0.7],
-            [2390, 12, 0.3]
-        ],
-        '오': [
-            [570,  8,  1.2],
-            [840,  10, 0.6],
-            [2410, 12, 0.2]
-        ],
-        '우': [
-            [300,  8,  1.3],
-            [870,  10, 0.4],
-            [2240, 12, 0.15]
-        ],
-        '으': [
-            [350,  8,  1.2],
-            [1500, 10, 0.5],
-            [2350, 12, 0.25]
-        ],
-        '이': [
-            [270,  8,  1.2],
-            [2290, 12, 0.7],
-            [3010, 14, 0.4]
-        ],
-        '에': [
-            [530,  8,  1.2],
-            [1840, 10, 0.7],
-            [2480, 12, 0.35]
-        ],
-        '애': [
-            [660,  8,  1.2],
-            [1720, 10, 0.75],
-            [2410, 12, 0.35]
-        ]
-    };
+    // 3. 새 음(Voice) 전용 노드 생성
+    const osc = new OscillatorNode(ctx, { type: 'sawtooth', frequency: 120 });
+    const voiceGain = new GainNode(ctx, { gain: 1 });
 
-    const formants = VOWEL_PRESETS[vowelChar] // [[730, 10, 1], [1090, 15, 0.4]]
+    // 어택(Attack)과 0.75초 뒤 자동 릴리즈(Release) 예약
+    voiceGain.gain.setValueAtTime(0.0001, now);
+    voiceGain.gain.exponentialRampToValueAtTime(1, now + 0.01);
+    voiceGain.gain.setValueAtTime(1, now + 0.7);
+    voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
+
+    const formants = VOWEL_PRESETS[vowelChar];
 
     const channels = formants.map(([frequency, Q, gain]) => {
         const bpf = new BiquadFilterNode(ctx, {
@@ -106,21 +106,29 @@ function playVowelSound2(vowelChar) {
             frequency,
             Q
         });
-
         const channelGain = new GainNode(ctx, { gain });
 
-        osc
-            .connect(bpf)
-            .connect(channelGain)
-            .connect(compressor);
+        // 각 채널의 출력을 공용 compressor 대신 이번 음의 voiceGain으로 모음
+        osc.connect(bpf).connect(channelGain).connect(voiceGain);
 
         return { bpf, channelGain };
     });
 
-    compressor
-        .connect(masterGain)
-        .connect(ctx.destination);
+    // 모아진 소리를 공용 체인(compressor)으로 전달
+    voiceGain.connect(compressor);
 
-    osc.start();
+    osc.start(now);
     osc.stop(now + 0.75);
+
+    // 4. 재생 종료 후 이번 음에 쓰인 모든 일회용 노드 정리
+    osc.onended = () => {
+        osc.disconnect();
+        channels.forEach(({ bpf, channelGain }) => {
+            bpf.disconnect();
+            channelGain.disconnect();
+        });
+        voiceGain.disconnect();
+    };
+
+    currentSound = { osc, voiceGain };
 }
